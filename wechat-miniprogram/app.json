@@ -1,0 +1,12 @@
+{
+  "pages": ["pages/h5/h5", "pages/index/index"],
+  "window": {
+    "navigationBarTitleText": "生命优化实验手册",
+    "navigationBarBackgroundColor": "#c8d5e2",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#e4edf7",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

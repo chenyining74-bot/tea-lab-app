@@ -1,0 +1,47 @@
+<!-- 布局对齐网页版首页：顶栏 + 总结/实验/归档 + 模块矩阵 -->
+<scroll-view class="scroll" scroll-y enhanced show-scrollbar="{{false}}">
+  <view class="header glass">
+    <text class="header-sub">Life Optimization Lab Manual</text>
+    <text class="header-title">生命优化实验手册</text>
+    <view class="header-row">
+      <view class="btn-summary" bindtap="onSummaryTap">生成今日摘要</view>
+    </view>
+  </view>
+
+  <view class="tabs glass">
+    <view
+      class="tab {{activeTab === 'dashboard' ? 'tab-on' : ''}}"
+      data-tab="dashboard"
+      bindtap="onTabTap"
+    >总结</view>
+    <view
+      class="tab {{activeTab === 'input' ? 'tab-on' : ''}}"
+      data-tab="input"
+      bindtap="onTabTap"
+    >实验</view>
+    <view
+      class="tab {{activeTab === 'archive' ? 'tab-on' : ''}}"
+      data-tab="archive"
+      bindtap="onTabTap"
+    >归档</view>
+  </view>
+
+  <view class="section-hint">以下为模块入口（功能开发与网页版同步中）</view>
+
+  <view class="matrix">
+    <view
+      class="cell glass"
+      wx:for="{{modules}}"
+      wx:key="id"
+      data-title="{{item.title}}"
+      bindtap="onModuleTap"
+    >
+      <text class="cell-icon">{{item.icon}}</text>
+      <text class="cell-title">{{item.title}}</text>
+    </view>
+  </view>
+
+  <view class="note glass">
+    <text class="note-text">提示：微信小程序内为精简原生界面；完整交互与数据请使用浏览器打开 Web 版「生命优化实验手册」。</text>
+  </view>
+</scroll-view>

@@ -1,0 +1,10 @@
+<!-- 全屏嵌入 Next 网页，与浏览器中「生命优化实验手册」同一套界面 -->
+<web-view wx:if="{{h5Url}}" src="{{h5Url}}"></web-view>
+
+<view wx:else class="setup">
+  <view class="setup-card">
+    <text class="setup-title">请先绑定网站地址</text>
+    <text class="setup-line">要与电脑里 Next 版完全一致，小程序会内嵌你的网页。请编辑项目根目录的 config.js，把 WEB_BASE_URL 改成已部署的 HTTPS 地址（例如 Vercel 域名），保存后重新编译。</text>
+    <text class="setup-line">微信公众平台 → 开发设置 → 业务域名：添加同一域名并完成校验。</text>
+  </view>
+</view>

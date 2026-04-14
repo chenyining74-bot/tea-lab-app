@@ -1,0 +1,36 @@
+/* web-view 铺满屏幕（navigationStyle: custom） */
+web-view {
+  display: block;
+  width: 100%;
+  height: 100vh;
+}
+
+.setup {
+  min-height: 100vh;
+  padding: calc(24rpx + env(safe-area-inset-top)) 32rpx 40rpx;
+  box-sizing: border-box;
+  background: linear-gradient(145deg, #e4edf7 0%, #d9e3f0 50%, #ddd8eb 100%);
+}
+
+.setup-card {
+  padding: 32rpx;
+  border-radius: 24rpx;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1rpx solid rgba(255, 255, 255, 0.5);
+}
+
+.setup-title {
+  display: block;
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 20rpx;
+}
+
+.setup-line {
+  display: block;
+  font-size: 26rpx;
+  line-height: 1.65;
+  color: #475569;
+  margin-bottom: 16rpx;
+}
