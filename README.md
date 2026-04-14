@@ -30,7 +30,7 @@ Run `supabase/cloud_sync_schema.sql`.
 
 ### 2) Configure environment variables
 
-Copy `.env.example` to `.env.local` and fill in:
+Copy `env.cloud.example` to `.env.local` and fill in:
 
 ```bash
 SUPABASE_URL=your_project_url
