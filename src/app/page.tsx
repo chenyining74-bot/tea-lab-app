@@ -586,6 +586,7 @@ export default function Home() {
   const [activeArchiveAppId, setActiveArchiveAppId] = useState<string | null>(null);
   const [archiveWorkshopOpen, setArchiveWorkshopOpen] = useState(false);
   const [matrixActionAppId, setMatrixActionAppId] = useState<string | null>(null);
+  const [archiveHistoryOnlyMode, setArchiveHistoryOnlyMode] = useState(false);
   const [timelineEntryId, setTimelineEntryId] = useState<string | null>(null);
   const [timelineAppendText, setTimelineAppendText] = useState("");
   const [archiveSpotlight, setArchiveSpotlight] = useState("");
@@ -2248,7 +2249,9 @@ export default function Home() {
     setSafetyTipIndex((prev) => (prev + 1) % safetyTipPool.length);
   }
   function openMatrixActions(appId: string) {
-    setMatrixActionAppId(appId);
+    setArchiveHistoryOnlyMode(true);
+    setActiveArchiveAppId(appId);
+    setMatrixActionAppId(null);
   }
   function handleMatrixPressStart(appId: string) {
     if (matrixPressTimerRef.current) {
@@ -2271,6 +2274,7 @@ export default function Home() {
       matrixLongPressedRef.current = false;
       return;
     }
+    setArchiveHistoryOnlyMode(false);
     setActiveArchiveAppId(appId);
   }
   function removeArchiveApp() {
@@ -2914,14 +2918,20 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-white/70 px-2 py-1">本月记录 {activeArchiveTimeline.length}</span>
-                <button onClick={() => setActiveArchiveAppId(null)} className="rounded-lg border border-white/35 bg-white/70 px-3 py-1">
+                <button
+                  onClick={() => {
+                    setActiveArchiveAppId(null);
+                    setArchiveHistoryOnlyMode(false);
+                  }}
+                  className="rounded-lg border border-white/35 bg-white/70 px-3 py-1"
+                >
                   返回矩阵
                 </button>
               </div>
             </div>
 
             <div className="flex h-full flex-col gap-3">
-              <div className="rounded-2xl border border-white/30 bg-white/55 p-3">
+              {!archiveHistoryOnlyMode && <div className="rounded-2xl border border-white/30 bg-white/55 p-3">
                 <p className="mb-2 text-sm font-semibold">
                   {activeArchiveApp.moduleId === "health"
                     ? "今日奶茶与作息"
@@ -3406,12 +3416,12 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
-              <div className="rounded-2xl border border-white/35 bg-white/65 p-3">
+              {!archiveHistoryOnlyMode && <div className="rounded-2xl border border-white/35 bg-white/65 p-3">
                 <p className="mb-2 text-sm font-semibold">Spotlight 检索栏</p>
                 <input value={archiveSpotlight} onChange={(e) => setArchiveSpotlight(e.target.value)} placeholder="搜索标题/关键词..." className="lab-input" />
-              </div>
+              </div>}
 
               <div className="flex-1 rounded-2xl border border-white/30 bg-white/55 p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -3452,7 +3462,7 @@ export default function Home() {
                   ))}
                   {archiveTimelineByMonth.monthKeys.length === 0 && <p className="text-sm text-slate-600">没有匹配到档案记录。</p>}
                 </div>
-                {timelineEntryId && (
+                {!archiveHistoryOnlyMode && timelineEntryId && (
                   <div className="mt-2 space-y-2 rounded-xl border border-white/35 bg-white/70 p-2">
                     <p className="text-xs text-slate-600">给选中记录补充细节（追加到正文）</p>
                     <textarea
