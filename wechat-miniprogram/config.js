@@ -6,7 +6,5 @@
  * 3. 微信开发者工具 → 详情 → 本地设置 → 勾选「不校验合法域名…」（仅本机调试；真机/上线必须配好域名）。
  */
 module.exports = {
-  // 示例：部署到 Vercel 后改成你的地址（不要加 / 后面的路径也可以）
-  // WEB_BASE_URL: "https://tea-lab-app.vercel.app",
-  WEB_BASE_URL: "",
+  WEB_BASE_URL: "https://tea-lab-app.vercel.app",
 };

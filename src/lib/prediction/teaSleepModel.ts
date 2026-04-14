@@ -4,6 +4,7 @@ export type TeaEntry = {
   sugarLevel: number;
   cupSize: "S" | "M" | "L";
   brand: string;
+  beverageName?: string;
   iceLevel: string;
   calories?: number;
   caffeineIntensity?: number;

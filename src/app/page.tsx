@@ -147,6 +147,15 @@ type ArchiveMatrixApp = {
   folderId: string | null;
   badgeCount: number;
 };
+type LabAccount = {
+  id: string;
+  username: string;
+  password: string;
+  profileName: string;
+  profileNote: string;
+  createdAt: string;
+  lastLoginAt: string;
+};
 
 const sugarFactor = [0, 0.6, 0.68, 0.76, 0.84, 0.92, 1, 1.12, 1.24, 1.36, 1.48];
 
@@ -184,7 +193,99 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const AUTH_ACCOUNTS_KEY = "tea-auth-accounts";
+const AUTH_CURRENT_ACCOUNT_KEY = "tea-auth-current-account";
+const AUTH_DATA_PREFIX = "tea-auth-data-";
+let accountDataBootstrapped = false;
+
+function readAccountsFromStorage() {
+  if (typeof window === "undefined") {
+    return [] as LabAccount[];
+  }
+  const raw = localStorage.getItem(AUTH_ACCOUNTS_KEY);
+  return raw ? (JSON.parse(raw) as LabAccount[]) : [];
+}
+
+function writeAccountsToStorage(accounts: LabAccount[]) {
+  localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts));
+}
+
+function collectLabDataSnapshot() {
+  const snapshot: Record<string, string> = {};
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("tea-lab-")) {
+      continue;
+    }
+    const value = localStorage.getItem(key);
+    if (value != null) {
+      snapshot[key] = value;
+    }
+  }
+  return snapshot;
+}
+
+function clearLabDataSnapshot() {
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("tea-lab-")) {
+      keys.push(key);
+    }
+  }
+  keys.forEach((k) => localStorage.removeItem(k));
+}
+
+function applyLabDataSnapshot(snapshot: Record<string, string>) {
+  clearLabDataSnapshot();
+  Object.entries(snapshot).forEach(([key, value]) => {
+    localStorage.setItem(key, value);
+  });
+}
+
+function bootstrapLabDataForCurrentAccount() {
+  if (accountDataBootstrapped || typeof window === "undefined") {
+    return;
+  }
+  accountDataBootstrapped = true;
+  const currentId = localStorage.getItem(AUTH_CURRENT_ACCOUNT_KEY);
+  if (!currentId) {
+    return;
+  }
+  const raw = localStorage.getItem(`${AUTH_DATA_PREFIX}${currentId}`);
+  if (!raw) {
+    return;
+  }
+  try {
+    applyLabDataSnapshot(JSON.parse(raw) as Record<string, string>);
+  } catch {
+    // Ignore malformed snapshots and keep existing local data.
+  }
+}
+
 export default function Home() {
+  bootstrapLabDataForCurrentAccount();
+  const [accounts, setAccounts] = useState<LabAccount[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    return readAccountsFromStorage();
+  });
+  const [currentAccountId, setCurrentAccountId] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return localStorage.getItem(AUTH_CURRENT_ACCOUNT_KEY);
+  });
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerProfileName, setRegisterProfileName] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [accountPanelOpen, setAccountPanelOpen] = useState(false);
+  const [saveNotice, setSaveNotice] = useState("");
   const [activeModule, setActiveModule] = useState<ModuleId | null>(null);
   const [enabledModules, setEnabledModules] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") {
@@ -274,6 +375,7 @@ export default function Home() {
   const [sugarLevel, setSugarLevel] = useState(5);
   const [cupSize, setCupSize] = useState<"S" | "M" | "L">("M");
   const [brand, setBrand] = useState("霸王茶姬");
+  const [beverageName, setBeverageName] = useState("");
   const [iceLevel, setIceLevel] = useState("少冰");
   const [teaTime, setTeaTime] = useState(new Date().toTimeString().slice(0, 5));
 
@@ -865,7 +967,7 @@ export default function Home() {
     });
   }, [knowledgeEntries, selectedFolderId, knowledgeSearch, knowledgeFolders]);
   const archiveMatrixApps = useMemo<ArchiveMatrixApp[]>(() => {
-    return allModules
+    const moduleApps = allModules
       .filter((module) => !["store", "archive", "safety", "quick-input"].includes(module.id))
       .map((module) => {
         const folder = knowledgeFolders.find((x) => x.name === module.title);
@@ -877,6 +979,18 @@ export default function Home() {
           badgeCount: folder ? knowledgeEntries.filter((entry) => entry.folderId === folder.id).length : 0,
         };
       });
+    const mappedFolderNames = new Set(allModules.map((module) => module.title));
+    const folderApps = knowledgeFolders
+      .filter((folder) => !mappedFolderNames.has(folder.name))
+      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+      .map((folder) => ({
+        id: `folder-${folder.id}`,
+        moduleId: `folder-${folder.id}`,
+        title: folder.name,
+        folderId: folder.id,
+        badgeCount: knowledgeEntries.filter((entry) => entry.folderId === folder.id).length,
+      }));
+    return [...moduleApps, ...folderApps];
   }, [allModules, knowledgeFolders, knowledgeEntries]);
   const activeArchiveApp = useMemo(
     () => archiveMatrixApps.find((item) => item.id === activeArchiveAppId) ?? null,
@@ -893,7 +1007,7 @@ export default function Home() {
     if (activeArchiveApp?.moduleId === "health") {
       return teaRecords.map((item) => ({
         id: item.id,
-        title: `${item.brand || "奶茶"} ${item.cupSize}杯 ${item.iceLevel}`,
+        title: `${item.brand || "奶茶"}${item.beverageName ? ` ${item.beverageName}` : ""} ${item.cupSize}杯 ${item.iceLevel}`,
         content: `糖度 ${item.sugarLevel}/10 ｜ 热量 ${item.calories ?? 0}kcal ｜ ${new Date(item.teaTimestamp).toLocaleString()}`,
         folderId: activeArchiveApp?.folderId ?? null,
         source: "archive" as const,
@@ -1012,6 +1126,7 @@ export default function Home() {
       sugarLevel,
       cupSize,
       brand,
+      beverageName: beverageName.trim() || undefined,
       iceLevel,
       calories: estimatedCalories,
       caffeineIntensity: estimateCaffeineIntensity({ cupSize, teaTimestamp }),
@@ -1038,6 +1153,7 @@ export default function Home() {
       symptom: periodSymptom,
     };
     setPeriodRecords((prev) => [newRecord, ...prev].slice(0, 24));
+    setSaveNotice("保存完成：周期记录已添加");
   }
 
   function addPlanItem(options?: { scope?: PlanScope; date?: string; timeSlot?: string }) {
@@ -1058,6 +1174,7 @@ export default function Home() {
     setPlanItems((prev) => [newPlan, ...prev].slice(0, 300));
     setPlanTitle("");
     setPlanNote("");
+    setSaveNotice("保存完成：计划已添加");
   }
 
   function togglePlanDone(id: string) {
@@ -1173,6 +1290,7 @@ export default function Home() {
     setShoppingPrice("");
     setShoppingImageDataUrl("");
     setShoppingStatusDraft("pending");
+    setSaveNotice("保存完成：购物项已添加");
   }
 
   function setShoppingStatus(id: string, status: ShoppingItem["status"]) {
@@ -1267,6 +1385,7 @@ export default function Home() {
     setArchiveContent("");
     setArchiveImage("");
     setManualFolderId("auto");
+    setSaveNotice("保存完成：已归档");
   }
 
   function saveQuickEntry() {
@@ -1286,6 +1405,7 @@ export default function Home() {
     setQuickTitle("");
     setQuickContent("");
     setQuickImage("");
+    setSaveNotice("保存完成：快速收藏已保存");
   }
   function buildTemporaryLog(allowEmpty = false) {
     if (!allowEmpty && !universalTitle.trim() && !universalContent.trim() && !universalImage && universalFiles.length === 0) {
@@ -1346,6 +1466,7 @@ export default function Home() {
     setUniversalFiles([]);
     setPendingLog(null);
     setPagerTab("archive");
+    setSaveNotice("保存完成：记录已发送");
   }
   function appendToKnowledgeEntry() {
     if (!timelineEntryId || !timelineAppendText.trim()) {
@@ -1367,6 +1488,7 @@ export default function Home() {
       const record = teaRecords.find((item) => item.id === entryId);
       if (!record) return;
       setBrand(record.brand);
+      setBeverageName(record.beverageName ?? "");
       setIceLevel(record.iceLevel);
       setCupSize(record.cupSize);
       setSugarLevel(record.sugarLevel);
@@ -1438,6 +1560,7 @@ export default function Home() {
             ? {
                 ...item,
                 brand,
+                beverageName: beverageName.trim() || undefined,
                 iceLevel,
                 cupSize,
                 sugarLevel,
@@ -1448,6 +1571,7 @@ export default function Home() {
             : item,
         ),
       );
+      setSaveNotice("保存完成：已更新所选记录");
       return;
     }
     if (activeArchiveApp?.moduleId === "planner") {
@@ -1459,6 +1583,7 @@ export default function Home() {
             : item,
         ),
       );
+      setSaveNotice("保存完成：已更新所选记录");
       return;
     }
     if (activeArchiveApp?.moduleId === "period") {
@@ -1469,6 +1594,7 @@ export default function Home() {
             : item,
         ),
       );
+      setSaveNotice("保存完成：已更新所选记录");
       return;
     }
     if (activeArchiveApp?.moduleId === "gaming") {
@@ -1488,6 +1614,7 @@ export default function Home() {
             : item,
         ),
       );
+      setSaveNotice("保存完成：已更新所选记录");
       return;
     }
     if (activeArchiveApp?.moduleId === "shopping") {
@@ -1505,6 +1632,7 @@ export default function Home() {
             : item,
         ),
       );
+      setSaveNotice("保存完成：已更新所选记录");
       return;
     }
     setKnowledgeEntries((prev) =>
@@ -1535,6 +1663,28 @@ export default function Home() {
         };
       }),
     );
+    setSaveNotice("保存完成：已更新所选记录");
+  }
+  function deleteSelectedArchiveRecord() {
+    if (!timelineEntryId) {
+      return;
+    }
+    if (activeArchiveApp?.moduleId === "health") {
+      setTeaRecords((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    } else if (activeArchiveApp?.moduleId === "planner") {
+      setPlanItems((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    } else if (activeArchiveApp?.moduleId === "period") {
+      setPeriodRecords((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    } else if (activeArchiveApp?.moduleId === "gaming") {
+      setGameEntries((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    } else if (activeArchiveApp?.moduleId === "shopping") {
+      setShoppingItems((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    } else {
+      setKnowledgeEntries((prev) => prev.filter((item) => item.id !== timelineEntryId));
+    }
+    setTimelineEntryId(null);
+    setTimelineAppendText("");
+    setSaveNotice("删除完成：记录已移除");
   }
   function saveArchiveMiniAppEntry(folderId: string | null) {
     if (!archiveTitle.trim() && !archiveContent.trim() && !archiveImage) {
@@ -1576,6 +1726,7 @@ export default function Home() {
       setArchiveMemoryStartDate(today);
       setArchiveMemoryEndDate(today);
     }
+    setSaveNotice("保存完成：已写入归档");
   }
   function saveDramaMiniEntry() {
     const dramaFolderId = createKnowledgeFolder(dramaType, `${dramaType}记录与感受`);
@@ -1594,6 +1745,7 @@ export default function Home() {
     setArchiveTitle("");
     setArchiveContent("");
     setArchiveImage("");
+    setSaveNotice("保存完成：媒体条目已保存");
   }
 
   function submitUniversalInput() {
@@ -1630,6 +1782,7 @@ export default function Home() {
     setFolderSelectorOpen(false);
     setLoggerFolderId(finalFolderId ?? "auto");
     setPagerTab("archive");
+    setSaveNotice("保存完成：已归档到文件夹");
   }
 
   function addSafetyRule() {
@@ -1699,6 +1852,7 @@ export default function Home() {
     setGameNextObjective("");
     setGameDraftTodos([]);
     setGameTodoInput("");
+    setSaveNotice("保存完成：游戏进度已记录");
   }
 
   function addGameDraftTodo() {
@@ -1726,6 +1880,7 @@ export default function Home() {
   function saveHealthDraft() {
     const draft = {
       brand,
+      beverageName,
       iceLevel,
       sugarLevel,
       cupSize,
@@ -1756,6 +1911,7 @@ export default function Home() {
     }
     const draft = JSON.parse(raw);
     setBrand(draft.brand ?? brand);
+    setBeverageName(draft.beverageName ?? beverageName);
     setIceLevel(draft.iceLevel ?? iceLevel);
     setSugarLevel(draft.sugarLevel ?? sugarLevel);
     setCupSize(draft.cupSize ?? cupSize);
@@ -1782,6 +1938,7 @@ export default function Home() {
     addDietRecord();
     addHealthExperimentEntry();
     setHealthDraftMessage("已保存奶茶、作息和饮食记录。");
+    setSaveNotice("保存完成：健康记录已写入");
   }
 
   function addHealthExperimentEntry() {
@@ -1839,6 +1996,9 @@ export default function Home() {
       if (parsed.brand) {
         setBrand(parsed.brand);
       }
+      if (parsed.beverageName) {
+        setBeverageName(parsed.beverageName);
+      }
       if (parsed.sugarLevel) {
         setSugarLevel(parsed.sugarLevel);
       }
@@ -1861,6 +2021,9 @@ export default function Home() {
     const parsed = parseTeaFromOcrText(teaNaturalText.replace(/\s+/g, ""));
     if (parsed.brand) {
       setBrand(parsed.brand);
+    }
+    if (parsed.beverageName) {
+      setBeverageName(parsed.beverageName);
     }
     if (parsed.sugarLevel) {
       setSugarLevel(parsed.sugarLevel);
@@ -1920,6 +2083,7 @@ export default function Home() {
     setMemoryRangeNote("");
     setMemoryRangeMood("平稳");
     setMemoryRangeDateType("range");
+    setSaveNotice("保存完成：记忆事件已添加");
   }
   function updateMemoryRangeEvent(eventId: string, updater: (item: MemoryRangeEvent) => MemoryRangeEvent) {
     setMemoryRangeEvents((prev) => prev.map((item) => (item.id === eventId ? updater(item) : item)));
@@ -1930,6 +2094,96 @@ export default function Home() {
       return item.startDate;
     }
     return `${item.startDate} ~ ${item.endDate}`;
+  }
+
+  function persistAccountSnapshot(targetAccountId: string) {
+    const snapshot = collectLabDataSnapshot();
+    localStorage.setItem(`${AUTH_DATA_PREFIX}${targetAccountId}`, JSON.stringify(snapshot));
+  }
+
+  function switchToAccount(targetAccountId: string) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (currentAccountId) {
+      persistAccountSnapshot(currentAccountId);
+    }
+    const raw = localStorage.getItem(`${AUTH_DATA_PREFIX}${targetAccountId}`);
+    const nextSnapshot = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    applyLabDataSnapshot(nextSnapshot);
+    localStorage.setItem(AUTH_CURRENT_ACCOUNT_KEY, targetAccountId);
+    setCurrentAccountId(targetAccountId);
+    window.location.reload();
+  }
+
+  function handleAuthLogin() {
+    const username = authUsername.trim();
+    if (!username || !authPassword) {
+      setAuthError("请输入账号和密码。");
+      return;
+    }
+    const account = accounts.find((a) => a.username === username && a.password === authPassword);
+    if (!account) {
+      setAuthError("账号或密码不正确。");
+      return;
+    }
+    const nextAccounts = accounts.map((item) =>
+      item.id === account.id ? { ...item, lastLoginAt: new Date().toISOString() } : item,
+    );
+    setAccounts(nextAccounts);
+    writeAccountsToStorage(nextAccounts);
+    setAuthError("");
+    switchToAccount(account.id);
+  }
+
+  function handleAuthRegister() {
+    const username = registerUsername.trim();
+    if (!username || !registerPassword) {
+      setAuthError("请至少填写账号与密码。");
+      return;
+    }
+    if (accounts.some((item) => item.username === username)) {
+      setAuthError("该账号已存在，请换一个用户名。");
+      return;
+    }
+    const now = new Date().toISOString();
+    const newAccount: LabAccount = {
+      id: uid(),
+      username,
+      password: registerPassword,
+      profileName: registerProfileName.trim() || username,
+      profileNote: "",
+      createdAt: now,
+      lastLoginAt: now,
+    };
+    const nextAccounts = [newAccount, ...accounts];
+    setAccounts(nextAccounts);
+    writeAccountsToStorage(nextAccounts);
+    setAuthError("");
+    setCurrentAccountId(newAccount.id);
+    localStorage.setItem(AUTH_CURRENT_ACCOUNT_KEY, newAccount.id);
+    localStorage.setItem(`${AUTH_DATA_PREFIX}${newAccount.id}`, JSON.stringify({}));
+    clearLabDataSnapshot();
+    window.location.reload();
+  }
+
+  function handleLogout() {
+    if (currentAccountId) {
+      persistAccountSnapshot(currentAccountId);
+    }
+    localStorage.removeItem(AUTH_CURRENT_ACCOUNT_KEY);
+    setCurrentAccountId(null);
+    clearLabDataSnapshot();
+    window.location.reload();
+  }
+
+  function updateCurrentAccountProfile(patch: Partial<Pick<LabAccount, "profileName" | "profileNote">>) {
+    if (!currentAccountId) {
+      return;
+    }
+    const nextAccounts = accounts.map((item) => (item.id === currentAccountId ? { ...item, ...patch } : item));
+    setAccounts(nextAccounts);
+    writeAccountsToStorage(nextAccounts);
   }
 
   function generateTodaySummary() {
@@ -2048,8 +2302,165 @@ export default function Home() {
     setMatrixActionAppId(null);
   }
 
+  useEffect(() => {
+    if (!currentAccountId || typeof window === "undefined") {
+      return;
+    }
+    const onBeforeUnload = () => {
+      persistAccountSnapshot(currentAccountId);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [currentAccountId]);
+
+  useEffect(() => {
+    if (!saveNotice) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSaveNotice(""), 1800);
+    return () => window.clearTimeout(timer);
+  }, [saveNotice]);
+
+  if (!currentAccountId) {
+    return (
+      <div className="min-h-screen p-6 text-slate-800" style={backgroundStyle}>
+        <main className="mx-auto max-w-md">
+          <section className="glass rounded-3xl p-5">
+            <p className="text-sm text-slate-600">Life Optimization Lab Manual</p>
+            <h1 className="mt-1 text-2xl font-semibold">账号管理</h1>
+            <p className="mt-2 text-sm text-slate-600">登录后将进入你的专属数据空间，不同账号的数据互相隔离。</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setAuthMode("login")}
+                className={`rounded-xl px-3 py-1 text-sm ${authMode === "login" ? "bg-white/70" : "bg-white/30"}`}
+              >
+                登录
+              </button>
+              <button
+                onClick={() => setAuthMode("register")}
+                className={`rounded-xl px-3 py-1 text-sm ${authMode === "register" ? "bg-white/70" : "bg-white/30"}`}
+              >
+                注册
+              </button>
+            </div>
+            {authMode === "login" ? (
+              <div className="mt-4 space-y-2">
+                <input
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  placeholder="账号"
+                  className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
+                />
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="密码"
+                  className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
+                />
+                <button onClick={handleAuthLogin} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm">
+                  登录并进入
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                <input
+                  value={registerUsername}
+                  onChange={(e) => setRegisterUsername(e.target.value)}
+                  placeholder="新账号"
+                  className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
+                />
+                <input
+                  type="password"
+                  value={registerPassword}
+                  onChange={(e) => setRegisterPassword(e.target.value)}
+                  placeholder="密码"
+                  className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
+                />
+                <input
+                  value={registerProfileName}
+                  onChange={(e) => setRegisterProfileName(e.target.value)}
+                  placeholder="昵称（可选）"
+                  className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
+                />
+                <button onClick={handleAuthRegister} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm">
+                  注册并创建专属数据
+                </button>
+              </div>
+            )}
+            {authError && <p className="mt-3 text-sm text-red-700">{authError}</p>}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  const currentAccount = accounts.find((item) => item.id === currentAccountId) ?? null;
+
   return (
     <div className="min-h-screen p-6 text-slate-800" style={backgroundStyle}>
+      {saveNotice && (
+        <div className="fixed left-1/2 top-4 z-[60] -translate-x-1/2 rounded-xl border border-emerald-300/70 bg-emerald-50/95 px-4 py-2 text-sm text-emerald-800 shadow-lg">
+          {saveNotice}
+        </div>
+      )}
+      {accountPanelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+          <div className="glass w-full max-w-lg rounded-3xl p-4 text-slate-800 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-base font-semibold">账号中心</p>
+              <button onClick={() => setAccountPanelOpen(false)} className="rounded-lg border border-white/35 bg-white/60 px-2 py-1 text-xs">
+                关闭
+              </button>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-slate-600">
+                当前昵称
+                <input
+                  value={currentAccount?.profileName ?? ""}
+                  onChange={(e) => updateCurrentAccountProfile({ profileName: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-white/35 bg-white/60 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                个人说明
+                <textarea
+                  value={currentAccount?.profileNote ?? ""}
+                  onChange={(e) => updateCurrentAccountProfile({ profileNote: e.target.value })}
+                  className="mt-1 h-20 w-full rounded-lg border border-white/35 bg-white/60 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                切换账号
+                <select
+                  value={currentAccountId}
+                  onChange={(e) => switchToAccount(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/35 bg-white/60 px-2 py-1 text-sm"
+                >
+                  {accounts.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.profileName || item.username}（{item.username}）
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAuthMode("register")}
+                  className="rounded-lg border border-white/35 bg-white/60 px-3 py-1 text-xs"
+                >
+                  新建账号
+                </button>
+                <button onClick={handleLogout} className="rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-xs text-red-700">
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {showStartupSplash && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-6 backdrop-blur-md">
           <div className="glass w-full max-w-xl rounded-3xl p-6 text-gray-800 shadow-2xl">
@@ -2084,8 +2495,15 @@ export default function Home() {
           <div>
             <p className="text-sm text-slate-600">Life Optimization Lab Manual</p>
             <h1 className="text-2xl font-semibold tracking-tight">生命优化实验手册</h1>
+            <p className="text-xs text-slate-500">当前用户：{currentAccount?.profileName || currentAccount?.username}</p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => setAccountPanelOpen(true)}
+              className="rounded-2xl border border-white/40 bg-white/20 px-4 py-2 text-sm backdrop-blur-xl hover:bg-white/30"
+            >
+              账号管理
+            </button>
             <button
               onClick={generateTodaySummary}
               className="rounded-2xl border border-white/40 bg-white/20 px-4 py-2 text-sm backdrop-blur-xl hover:bg-white/30"
@@ -2410,14 +2828,20 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <div className="mt-3 flex items-center gap-2 border-t border-white/30 pt-3">
-              <input value={folderNameInput} onChange={(e) => setFolderNameInput(e.target.value)} placeholder="新文件夹名" className="lab-input flex-1" />
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/30 pt-3">
+              <input
+                value={folderNameInput}
+                onChange={(e) => setFolderNameInput(e.target.value)}
+                placeholder="新文件夹名"
+                className="lab-input basis-full sm:basis-auto sm:flex-1"
+              />
               <button
                 onClick={() => {
                   const id = createKnowledgeFolder(folderNameInput, "");
                   if (id) {
                     setSelectorFolderId(id);
                     setFolderNameInput("");
+                    setSaveNotice("创建完成：文件夹已加入应用矩阵");
                   }
                 }}
                 className="rounded-xl border border-white/35 bg-white/65 px-3 py-2 text-sm"
@@ -2521,6 +2945,7 @@ export default function Home() {
                     <div className="rounded-xl border border-white/35 bg-white/60 p-2">
                       <p className="mb-2 text-xs font-semibold text-slate-600">今日奶茶</p>
                       <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="品牌" className="lab-input" />
+                      <input value={beverageName} onChange={(e) => setBeverageName(e.target.value)} placeholder="饮品名称（如：伯牙绝弦）" className="lab-input mt-2" />
                       <div className="mt-2 grid gap-2 sm:grid-cols-2">
                         <input type="time" value={teaTime} onChange={(e) => setTeaTime(e.target.value)} className="lab-input" />
                         <select value={cupSize} onChange={(e) => setCupSize(e.target.value as "S" | "M" | "L")} className="lab-input">
@@ -2585,6 +3010,13 @@ export default function Home() {
                         <input type="date" value={dietDate} onChange={(e) => setDietDate(e.target.value)} className="lab-input sm:col-span-2" />
                         <div className="flex items-center gap-2 sm:col-span-2">
                           <input value={breakfast} onChange={(e) => setBreakfast(e.target.value)} placeholder="早餐" className="lab-input" />
+                          <button
+                            type="button"
+                            onClick={() => setBreakfast("没吃")}
+                            className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-2 py-1 text-xs text-amber-800"
+                          >
+                            没吃
+                          </button>
                           <label className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-white/35 bg-white/75 text-slate-600">
                             <Plus size={14} strokeWidth={1.5} />
                             <input type="file" accept="image/*" onChange={(e) => handleMealImageUpload("breakfast", e)} className="hidden" />
@@ -2594,6 +3026,13 @@ export default function Home() {
                         {breakfastImage && <Image src={breakfastImage} alt="breakfast preview" width={84} height={84} className="rounded-lg border border-white/40 object-cover sm:col-span-2" />}
                         <div className="flex items-center gap-2 sm:col-span-2">
                           <input value={lunch} onChange={(e) => setLunch(e.target.value)} placeholder="午餐" className="lab-input" />
+                          <button
+                            type="button"
+                            onClick={() => setLunch("没吃")}
+                            className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-2 py-1 text-xs text-amber-800"
+                          >
+                            没吃
+                          </button>
                           <label className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-white/35 bg-white/75 text-slate-600">
                             <Plus size={14} strokeWidth={1.5} />
                             <input type="file" accept="image/*" onChange={(e) => handleMealImageUpload("lunch", e)} className="hidden" />
@@ -2603,6 +3042,13 @@ export default function Home() {
                         {lunchImage && <Image src={lunchImage} alt="lunch preview" width={84} height={84} className="rounded-lg border border-white/40 object-cover sm:col-span-2" />}
                         <div className="flex items-center gap-2 sm:col-span-2">
                           <input value={dinner} onChange={(e) => setDinner(e.target.value)} placeholder="晚餐" className="lab-input" />
+                          <button
+                            type="button"
+                            onClick={() => setDinner("没吃")}
+                            className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-2 py-1 text-xs text-amber-800"
+                          >
+                            没吃
+                          </button>
                           <label className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-white/35 bg-white/75 text-slate-600">
                             <Plus size={14} strokeWidth={1.5} />
                             <input type="file" accept="image/*" onChange={(e) => handleMealImageUpload("dinner", e)} className="hidden" />
@@ -3019,6 +3465,12 @@ export default function Home() {
                     <button onClick={appendToKnowledgeEntry} className="rounded-lg border border-white/35 bg-white/80 px-3 py-1 text-sm">
                       追加到记录
                     </button>
+                    <button
+                      onClick={deleteSelectedArchiveRecord}
+                      className="rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700"
+                    >
+                      删除所选记录
+                    </button>
                   </div>
                 )}
               </div>
@@ -3090,6 +3542,12 @@ export default function Home() {
                       value={brand}
                       onChange={(e) => setBrand(e.target.value)}
                       placeholder="品牌"
+                      className="rounded-xl border border-white/30 bg-white/20 px-3 py-2 text-sm outline-none"
+                    />
+                    <input
+                      value={beverageName}
+                      onChange={(e) => setBeverageName(e.target.value)}
+                      placeholder="饮品名称（如：伯牙绝弦）"
                       className="rounded-xl border border-white/30 bg-white/20 px-3 py-2 text-sm outline-none"
                     />
                     <select
@@ -3179,18 +3637,39 @@ export default function Home() {
                       placeholder="早餐"
                       className="rounded-xl border border-white/30 bg-white/20 px-3 py-2 text-sm outline-none sm:col-span-2"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setBreakfast("没吃")}
+                      className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 sm:col-span-2"
+                    >
+                      早餐没吃
+                    </button>
                     <input
                       value={lunch}
                       onChange={(e) => setLunch(e.target.value)}
                       placeholder="午餐"
                       className="rounded-xl border border-white/30 bg-white/20 px-3 py-2 text-sm outline-none sm:col-span-2"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setLunch("没吃")}
+                      className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 sm:col-span-2"
+                    >
+                      午餐没吃
+                    </button>
                     <input
                       value={dinner}
                       onChange={(e) => setDinner(e.target.value)}
                       placeholder="晚餐"
                       className="rounded-xl border border-white/30 bg-white/20 px-3 py-2 text-sm outline-none sm:col-span-2"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setDinner("没吃")}
+                      className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 sm:col-span-2"
+                    >
+                      晚餐没吃
+                    </button>
                   </div>
                 </div>
 
@@ -3316,7 +3795,7 @@ export default function Home() {
                   <p>最近健康记录</p>
                   {teaRecords.slice(0, 2).map((item) => (
                     <p key={item.id}>
-                      奶茶：{new Date(item.teaTimestamp).toLocaleString()} ｜ {item.brand} {item.iceLevel} ｜ {item.calories ?? 0} kcal
+                      奶茶：{new Date(item.teaTimestamp).toLocaleString()} ｜ {item.brand}{item.beverageName ? ` ${item.beverageName}` : ""} {item.iceLevel} ｜ {item.calories ?? 0} kcal
                     </p>
                   ))}
                   {vitalRecords.slice(0, 2).map((item) => (
@@ -3934,9 +4413,12 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => {
-                      createKnowledgeFolder(folderNameInput, folderDescInput);
-                      setFolderNameInput("");
-                      setFolderDescInput("");
+                      const id = createKnowledgeFolder(folderNameInput, folderDescInput);
+                      if (id) {
+                        setFolderNameInput("");
+                        setFolderDescInput("");
+                        setSaveNotice("创建完成：文件夹已加入应用矩阵");
+                      }
                     }}
                     className="mt-2 rounded-xl border border-white/35 bg-white/25 px-3 py-2 text-sm"
                   >
@@ -4247,7 +4729,15 @@ export default function Home() {
                             key={item.id}
                             className="rounded-xl border border-slate-400/25 bg-white/50 p-3 text-xs text-slate-800 shadow-sm"
                           >
-                            <div className="mb-2 font-medium text-slate-900">{item.title}</div>
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <div className="font-medium text-slate-900">{item.title}</div>
+                              <button
+                                onClick={() => setMemoryRangeEvents((prev) => prev.filter((entry) => entry.id !== item.id))}
+                                className="rounded-md border border-red-300 bg-red-50 px-2 py-0.5 text-[11px] text-red-700"
+                              >
+                                删除
+                              </button>
+                            </div>
                             <div className="grid gap-2 sm:grid-cols-2">
                               <label>
                                 时间范围
@@ -4398,7 +4888,7 @@ export default function Home() {
                   </div>
                   <div className="mt-3 space-y-2 text-sm">
                     {memoryDayRecords.tea.map((item) => (
-                      <p key={item.id}>🧋 {item.brand} {item.iceLevel} ｜ 糖度 {item.sugarLevel} ｜ {item.calories ?? 0} kcal</p>
+                      <p key={item.id}>🧋 {item.brand}{item.beverageName ? ` ${item.beverageName}` : ""} {item.iceLevel} ｜ 糖度 {item.sugarLevel} ｜ {item.calories ?? 0} kcal</p>
                     ))}
                     {memoryDayRecords.diet.map((item) => (
                       <p key={item.id}>🍱 早:{item.breakfast || "-"} 中:{item.lunch || "-"} 晚:{item.dinner || "-"}</p>
@@ -4986,12 +5476,27 @@ function buildYearOverview(data: {
 
 function parseTeaFromOcrText(text: string): {
   brand?: string;
+  beverageName?: string;
   sugarLevel?: number;
   cupSize?: "S" | "M" | "L";
   iceLevel?: string;
 } {
   const brands = ["霸王茶姬", "喜茶", "奈雪", "沪上阿姨", "古茗", "茶百道", "蜜雪冰城"];
   const brand = brands.find((item) => text.includes(item));
+  const beverageCandidates = [
+    "伯牙绝弦",
+    "青青糯山",
+    "桂馥兰香",
+    "抹茶",
+    "芝士奶盖",
+    "杨枝甘露",
+    "茉莉奶绿",
+    "乌龙奶茶",
+    "生椰",
+    "葡萄",
+    "柠檬",
+  ];
+  const beverageName = beverageCandidates.find((item) => text.includes(item));
 
   const sugarRules: Array<{ key: string; value: number }> = [
     { key: "无糖", value: 1 },
@@ -5026,6 +5531,7 @@ function parseTeaFromOcrText(text: string): {
 
   return {
     brand,
+    beverageName,
     sugarLevel: sugarMatch?.value,
     cupSize,
     iceLevel,
