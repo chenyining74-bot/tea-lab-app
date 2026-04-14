@@ -2870,17 +2870,16 @@ export default function Home() {
                 }}
                 className="w-full rounded-xl border border-white/35 bg-white/70 px-3 py-2 text-left text-sm"
               >
-                查看
+                打开专属档案馆
               </button>
               <button
                 onClick={() => {
-                  setArchiveWorkshopOpen(true);
-                  setPagerTab("archive");
+                  setActiveArchiveAppId(matrixActionApp.id);
                   setMatrixActionAppId(null);
                 }}
                 className="w-full rounded-xl border border-white/35 bg-white/70 px-3 py-2 text-left text-sm"
               >
-                编辑文件夹
+                编辑本组件档案
               </button>
               <button
                 onClick={removeArchiveApp}
