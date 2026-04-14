@@ -156,6 +156,7 @@ type LabAccount = {
   createdAt: string;
   lastLoginAt: string;
 };
+type CloudAccountDTO = Omit<LabAccount, "password">;
 
 const sugarFactor = [0, 0.6, 0.68, 0.76, 0.84, 0.92, 1, 1.12, 1.24, 1.36, 1.48];
 
@@ -285,6 +286,9 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
+  const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
+  const [cloudSyncReady, setCloudSyncReady] = useState(false);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
   const [activeModule, setActiveModule] = useState<ModuleId | null>(null);
   const [enabledModules, setEnabledModules] = useState<Record<string, boolean>>(() => {
@@ -2097,12 +2101,59 @@ export default function Home() {
     return `${item.startDate} ~ ${item.endDate}`;
   }
 
+  async function callCloudAuth(payload: Record<string, unknown>) {
+    const response = await fetch("/api/cloud-auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = (await response.json()) as { ok: boolean; error?: string; enabled?: boolean; account?: CloudAccountDTO };
+    return { response, result };
+  }
+
+  async function loadSnapshotFromCloud(accountId: string) {
+    const response = await fetch("/api/cloud-snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "load", accountId }),
+    });
+    const result = (await response.json()) as { ok: boolean; snapshot?: Record<string, string> };
+    if (!response.ok || !result.ok) {
+      return null;
+    }
+    return result.snapshot ?? {};
+  }
+
+  async function saveSnapshotToCloud(accountId: string, snapshot: Record<string, string>) {
+    const response = await fetch("/api/cloud-snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", accountId, snapshot }),
+    });
+    const result = (await response.json()) as { ok: boolean };
+    return response.ok && result.ok;
+  }
+
+  function upsertLocalAccount(cloudAccount: CloudAccountDTO, plainPassword: string) {
+    const localAccount: LabAccount = {
+      ...cloudAccount,
+      password: plainPassword,
+    };
+    const merged = [localAccount, ...accounts.filter((item) => item.id !== cloudAccount.id && item.username !== cloudAccount.username)];
+    setAccounts(merged);
+    writeAccountsToStorage(merged);
+    return localAccount;
+  }
+
   function persistAccountSnapshot(targetAccountId: string) {
     const snapshot = collectLabDataSnapshot();
     localStorage.setItem(`${AUTH_DATA_PREFIX}${targetAccountId}`, JSON.stringify(snapshot));
+    if (cloudSyncEnabled) {
+      void saveSnapshotToCloud(targetAccountId, snapshot);
+    }
   }
 
-  function switchToAccount(targetAccountId: string) {
+  async function switchToAccount(targetAccountId: string) {
     if (typeof window === "undefined") {
       return;
     }
@@ -2110,17 +2161,39 @@ export default function Home() {
       persistAccountSnapshot(currentAccountId);
     }
     const raw = localStorage.getItem(`${AUTH_DATA_PREFIX}${targetAccountId}`);
-    const nextSnapshot = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    let nextSnapshot = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    if (cloudSyncEnabled) {
+      setCloudSyncing(true);
+      const cloudSnapshot = await loadSnapshotFromCloud(targetAccountId);
+      if (cloudSnapshot) {
+        nextSnapshot = cloudSnapshot;
+        localStorage.setItem(`${AUTH_DATA_PREFIX}${targetAccountId}`, JSON.stringify(cloudSnapshot));
+      }
+      setCloudSyncing(false);
+    }
     applyLabDataSnapshot(nextSnapshot);
     localStorage.setItem(AUTH_CURRENT_ACCOUNT_KEY, targetAccountId);
     setCurrentAccountId(targetAccountId);
     window.location.reload();
   }
 
-  function handleAuthLogin() {
+  async function handleAuthLogin() {
     const username = authUsername.trim();
     if (!username || !authPassword) {
       setAuthError("请输入账号和密码。");
+      return;
+    }
+    if (cloudSyncEnabled) {
+      setCloudSyncing(true);
+      const { response, result } = await callCloudAuth({ action: "login", username, password: authPassword });
+      setCloudSyncing(false);
+      if (!response.ok || !result.ok || !result.account) {
+        setAuthError("云端账号或密码不正确。");
+        return;
+      }
+      const localAccount = upsertLocalAccount(result.account, authPassword);
+      setAuthError("");
+      await switchToAccount(localAccount.id);
       return;
     }
     const account = accounts.find((a) => a.username === username && a.password === authPassword);
@@ -2134,13 +2207,35 @@ export default function Home() {
     setAccounts(nextAccounts);
     writeAccountsToStorage(nextAccounts);
     setAuthError("");
-    switchToAccount(account.id);
+    await switchToAccount(account.id);
   }
 
-  function handleAuthRegister() {
+  async function handleAuthRegister() {
     const username = registerUsername.trim();
     if (!username || !registerPassword) {
       setAuthError("请至少填写账号与密码。");
+      return;
+    }
+    if (cloudSyncEnabled) {
+      setCloudSyncing(true);
+      const { response, result } = await callCloudAuth({
+        action: "register",
+        username,
+        password: registerPassword,
+        profileName: registerProfileName.trim() || username,
+      });
+      setCloudSyncing(false);
+      if (!response.ok || !result.ok || !result.account) {
+        setAuthError(result.error === "username_exists" ? "该账号已存在，请换一个用户名。" : "云端注册失败，请稍后重试。");
+        return;
+      }
+      const localAccount = upsertLocalAccount(result.account, registerPassword);
+      setAuthError("");
+      setCurrentAccountId(localAccount.id);
+      localStorage.setItem(AUTH_CURRENT_ACCOUNT_KEY, localAccount.id);
+      localStorage.setItem(`${AUTH_DATA_PREFIX}${localAccount.id}`, JSON.stringify({}));
+      clearLabDataSnapshot();
+      window.location.reload();
       return;
     }
     if (accounts.some((item) => item.username === username)) {
@@ -2178,6 +2273,18 @@ export default function Home() {
     window.location.reload();
   }
 
+  async function syncCurrentAccountNow() {
+    if (!currentAccountId || !cloudSyncEnabled) {
+      return;
+    }
+    setCloudSyncing(true);
+    const snapshot = collectLabDataSnapshot();
+    localStorage.setItem(`${AUTH_DATA_PREFIX}${currentAccountId}`, JSON.stringify(snapshot));
+    const ok = await saveSnapshotToCloud(currentAccountId, snapshot);
+    setCloudSyncing(false);
+    setSaveNotice(ok ? "云同步完成：当前账号数据已上传" : "云同步失败：请稍后重试");
+  }
+
   function updateCurrentAccountProfile(patch: Partial<Pick<LabAccount, "profileName" | "profileNote">>) {
     if (!currentAccountId) {
       return;
@@ -2185,6 +2292,17 @@ export default function Home() {
     const nextAccounts = accounts.map((item) => (item.id === currentAccountId ? { ...item, ...patch } : item));
     setAccounts(nextAccounts);
     writeAccountsToStorage(nextAccounts);
+    if (cloudSyncEnabled) {
+      const current = nextAccounts.find((item) => item.id === currentAccountId);
+      if (current) {
+        void callCloudAuth({
+          action: "update-profile",
+          accountId: currentAccountId,
+          profileName: current.profileName,
+          profileNote: current.profileNote,
+        });
+      }
+    }
   }
 
   function generateTodaySummary() {
@@ -2307,6 +2425,19 @@ export default function Home() {
   }
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const { result } = await callCloudAuth({ action: "status" });
+        setCloudSyncEnabled(Boolean(result.enabled));
+      } catch {
+        setCloudSyncEnabled(false);
+      } finally {
+        setCloudSyncReady(true);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     if (!currentAccountId || typeof window === "undefined") {
       return;
     }
@@ -2335,6 +2466,9 @@ export default function Home() {
             <p className="text-sm text-slate-600">Life Optimization Lab Manual</p>
             <h1 className="mt-1 text-2xl font-semibold">账号管理</h1>
             <p className="mt-2 text-sm text-slate-600">登录后将进入你的专属数据空间，不同账号的数据互相隔离。</p>
+            <p className="mt-1 text-xs text-slate-500">
+              云同步状态：{!cloudSyncReady ? "检测中..." : cloudSyncEnabled ? "已开启（跨设备可同步）" : "未配置（仅本机保存）"}
+            </p>
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setAuthMode("login")}
@@ -2364,8 +2498,8 @@ export default function Home() {
                   placeholder="密码"
                   className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
                 />
-                <button onClick={handleAuthLogin} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm">
-                  登录并进入
+                <button disabled={cloudSyncing} onClick={handleAuthLogin} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm disabled:opacity-60">
+                  {cloudSyncing ? "登录同步中..." : "登录并进入"}
                 </button>
               </div>
             ) : (
@@ -2389,8 +2523,8 @@ export default function Home() {
                   placeholder="昵称（可选）"
                   className="w-full rounded-xl border border-white/35 bg-white/50 px-3 py-2 text-sm outline-none"
                 />
-                <button onClick={handleAuthRegister} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm">
-                  注册并创建专属数据
+                <button disabled={cloudSyncing} onClick={handleAuthRegister} className="rounded-xl border border-white/40 bg-white/60 px-3 py-2 text-sm disabled:opacity-60">
+                  {cloudSyncing ? "注册同步中..." : "注册并创建专属数据"}
                 </button>
               </div>
             )}
@@ -2420,6 +2554,9 @@ export default function Home() {
               </button>
             </div>
             <div className="space-y-2">
+              <p className="text-xs text-slate-500">
+                云同步：{cloudSyncEnabled ? "已开启" : "未开启（请配置 Supabase 环境变量）"}
+              </p>
               <label className="text-xs text-slate-600">
                 当前昵称
                 <input
@@ -2451,6 +2588,13 @@ export default function Home() {
                 </select>
               </label>
               <div className="flex gap-2">
+                <button
+                  onClick={syncCurrentAccountNow}
+                  disabled={!cloudSyncEnabled || cloudSyncing}
+                  className="rounded-lg border border-white/35 bg-white/60 px-3 py-1 text-xs disabled:opacity-60"
+                >
+                  {cloudSyncing ? "同步中..." : "立即云同步"}
+                </button>
                 <button
                   onClick={() => setAuthMode("register")}
                   className="rounded-lg border border-white/35 bg-white/60 px-3 py-1 text-xs"

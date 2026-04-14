@@ -20,6 +20,27 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Supabase Cloud Sync
+
+The app supports cloud account data sync so the same account can restore history across devices.
+
+### 1) Create tables in Supabase SQL Editor
+
+Run `supabase/cloud_sync_schema.sql`.
+
+### 2) Configure environment variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+```bash
+SUPABASE_URL=your_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+### 3) Deploy with the same env vars
+
+Set both variables in Vercel project settings, then redeploy.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
