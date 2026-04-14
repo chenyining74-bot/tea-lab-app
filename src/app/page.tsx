@@ -813,7 +813,7 @@ export default function Home() {
     const wakePenalty = wakeMins <= 8 * 60 ? 8 : 25;
     const planPenalty = Math.round((1 - todayPlanCompletion) * 35);
     const latestDiet = dietRecords.find((item) => item.date === todayDateKey);
-    const filledMeals = [latestDiet?.breakfast, latestDiet?.lunch, latestDiet?.dinner].filter(Boolean).length;
+    const filledMeals = [latestDiet?.breakfast, latestDiet?.lunch, latestDiet?.dinner].filter((item) => item && !isSkippedMealText(item)).length;
     const dietPenalty = (3 - filledMeals) * 8;
     const reminderPenalty = Math.min(25, todayReminders.length * 5);
     return Math.min(100, wakePenalty + planPenalty + dietPenalty + reminderPenalty);
@@ -924,7 +924,7 @@ export default function Home() {
     const todayTea = teaRecords.filter((item) => toDateKey(item.teaTimestamp) === todayDateKey);
     const todayCalories = todayTea.reduce((sum, item) => sum + (item.calories ?? 0), 0);
     const latestDiet = dietRecords.find((item) => item.date === todayDateKey);
-    const mealCount = [latestDiet?.breakfast, latestDiet?.lunch, latestDiet?.dinner].filter(Boolean).length;
+    const mealCount = [latestDiet?.breakfast, latestDiet?.lunch, latestDiet?.dinner].filter((item) => item && !isSkippedMealText(item)).length;
     const pmsHint = periodInsight.isPms ? "经前期建议降低学习强度，优先冥想 15 分钟。" : "今日可按常规节奏推进学习。";
     return `今日摄入约 ${todayCalories} kcal，三餐记录 ${mealCount}/3，计划任务 ${todayPlanItems.length} 项（完成率 ${Math.round(
       todayPlanCompletion * 100,
@@ -5270,10 +5270,10 @@ function estimateTeaCalories(input: {
 
 function estimateMealCalories(text: string) {
   const input = text.trim().toLowerCase();
-  if (!input) {
+  if (!input || isSkippedMealText(input)) {
     return 0;
   }
-  let total = 120;
+  let total = 80;
   const map: Array<[string, number]> = [
     ["米饭", 180],
     ["面", 220],
@@ -5294,7 +5294,16 @@ function estimateMealCalories(text: string) {
       total += kcal;
     }
   });
-  return Math.min(1600, Math.max(80, total));
+  return Math.min(1600, Math.max(0, total));
+}
+
+function isSkippedMealText(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  const skippedKeywords = ["没吃", "未吃", "不吃", "skip", "skipped", "none", "无"];
+  return skippedKeywords.some((keyword) => normalized === keyword || normalized.includes(keyword));
 }
 
 function calcDaySpan(startDate: string, endDate: string) {
